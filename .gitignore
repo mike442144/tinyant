@@ -1,0 +1,9 @@
+node_modules
+*.log
+config.json
+data/
+log/
+*~
+.qoder/
+.claude/
+qoder_session.txt

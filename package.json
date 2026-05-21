@@ -1,0 +1,14 @@
+{
+  "name": "tinyant",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "crawler": "^2.0.2",
+    "dayjs": "^1.11.13",
+    "minimist": "^1.2.8",
+    "papaparse": "^5.4.1",
+    "ramda": "^0.32.0",
+    "seenreq": "^3.0.0",
+    "tslog": "^4.9.2"
+  }
+}
