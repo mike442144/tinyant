@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "crawler": "^2.0.2",
+    "crawler": "^2.1.0",
     "dayjs": "^1.11.13",
     "minimist": "^1.2.8",
     "papaparse": "^5.4.1",
