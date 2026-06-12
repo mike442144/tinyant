@@ -119,6 +119,8 @@ SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,REPORT_TYPE,REPORT_YEAR,REPORT_DATE,KC
 
 `mainop.js` 用于爬取上市公司的**主营构成**数据，包括按行业、按产品、按地区三个维度的营收/成本/利润构成。
 
+> ⚠️ **仅支持 A 股**：股票代码为 6 位数字，脚本根据首位自动识别交易所（0/3 开头为深交所 SZ，其余为上交所 SH）。暂不支持港股、美股等其他市场。
+
 ## 使用方法
 
 ```bash
