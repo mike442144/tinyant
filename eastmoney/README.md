@@ -112,3 +112,69 @@ SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,REPORT_TYPE,REPORT_YEAR,REPORT_DATE,KC
 ```
 
 所有金额数据单位均为百万元。
+
+---
+
+# 主营构成数据爬取（mainop.js）
+
+`mainop.js` 用于爬取上市公司的**主营构成**数据，包括按行业、按产品、按地区三个维度的营收/成本/利润构成。
+
+## 使用方法
+
+```bash
+node mainop.js [options]
+```
+
+### 参数说明
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--file <path>` | 股票代码文件路径（每行一个代码，#开头为注释） | - |
+| `--codes <list>` | 股票代码列表，逗号分隔 | - |
+| `--date <list>` | 报告日期，逗号分隔（如 `2024-12-31`）。省略则获取全部可用期次 | - |
+| `--count <n>` | 单次请求返回的最大行数 | 200 |
+| `-h, --help` | 显示帮助信息 | - |
+
+### 使用示例
+
+**获取单个股票指定期次的主营构成：**
+```bash
+node mainop.js --codes 600079 --date 2024-12-31
+```
+
+**获取多个期次：**
+```bash
+node mainop.js --codes 600079 --date 2024-12-31,2023-12-31
+```
+
+**获取全部可用期次（不指定日期）：**
+```bash
+node mainop.js --codes 600079
+```
+
+## 输出文件
+
+- 路径：`./data/`
+- 格式：`eastmoney_mainop_YYYY-MM-DD.csv`
+- 编码：UTF-8 with BOM
+
+## 数据字段说明
+
+| 字段名 | 说明 |
+|--------|------|
+| SECUCODE | 证券代码（带交易所后缀） |
+| SECURITY_CODE | 证券代码 |
+| REPORT_DATE | 报告日期 |
+| MAINOP_TYPE | 构成分类代码（1=按行业，2=按产品，3=按地区） |
+| MAINOP_TYPE_NAME | 构成分类名称（脚本派生字段） |
+| ITEM_NAME | 项目名称（如制造业、医疗器械、国内等） |
+| MAIN_BUSINESS_INCOME | 主营收入（单位：百万元） |
+| MBI_RATIO | 收入占比 |
+| MAIN_BUSINESS_COST | 主营成本（单位：百万元） |
+| MBC_RATIO | 成本占比 |
+| MAIN_BUSINESS_RPOFIT | 主营利润（单位：百万元） |
+| MBR_RATIO | 利润占比 |
+| GROSS_RPOFIT_RATIO | 毛利率 |
+| RANK | 同分类下的排序 |
+
+金额字段（收入/成本/利润）单位为百万元；占比与毛利率为小数（如 0.56 表示 56%）。
