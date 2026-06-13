@@ -14,11 +14,11 @@ const argv = minimist(process.argv.slice(2), {
 if (argv.help) {
 	console.log(`Usage: node index.js [options]
 
-下载A股/港股上市公司年度报告（PDF）数据来源：巨潮资讯网。
+下载A股上市公司年度报告（PDF）数据来源：巨潮资讯网。
 
 Options:
   --file <path>       Stock codes file (one per line, # for comments)
-  --codes <list>      Stock codes, comma-separated (6-digit=A-share, 5-digit=HK)
+  --codes <list>      Stock codes, comma-separated
   --year <range>      Fiscal year range, e.g. 2020-2025 or single year 2023 (default: current year)
   -h, --help          Show this help message`);
 	process.exit(0);
@@ -32,11 +32,6 @@ const log = getLogger(identifier, path.resolve(logDir, `${identifier}_${dayjs().
 const TOP_SEARCH_URL = "http://www.cninfo.com.cn/new/information/topSearch/query";
 const QUERY_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query";
 const STATIC_BASE = "http://static.cninfo.com.cn/";
-
-const MARKET_CONFIG = {
-	a: { category: "A股", queryCategory: "category_ndbg_szsh", getExchange: (code) => (code[0] === "0" || code[0] === "3") ? "szse" : "sse" },
-	hk: { category: "港股", queryCategory: "", getExchange: () => null },
-};
 
 const FILTER_KEYWORDS = ["摘要", "英文", "更正", "补充", "已取消"];
 const csvHeaders = ["code", "secName", "year", "title", "fileName", "fileSize", "downloadTime"];
@@ -131,32 +126,17 @@ class Task {
 		}
 
 		const matches = Array.isArray(data) ? data : (data.keyWordList || []);
-		const market = stockCode.length === 6 ? 'a' : 'hk';
-		const marketConfig = MARKET_CONFIG[market];
-		const match = matches.find(m => m.code === stockCode && m.category === marketConfig.category);
+		const match = matches.find(m => m.code === stockCode && m.category === "A股");
 
 		if (!match) {
-			log.warn(`No ${marketConfig.category} match for ${stockCode}. Candidates: ${JSON.stringify(matches.map(m => ({ code: m.code, category: m.category })))}`);
+			log.warn(`No A-share match for ${stockCode}. Candidates: ${JSON.stringify(matches.map(m => ({ code: m.code, category: m.category })))}`);
 			return done();
 		}
 
 		const { orgId, zwjc: secName } = match;
-		const exchange = marketConfig.getExchange(stockCode);
+		const exchange = (stockCode[0] === "0" || stockCode[0] === "3") ? "szse" : "sse";
 
-		log.info(`Resolved ${stockCode} -> orgId=${orgId}, name=${secName}, exchange=${exchange || 'n/a'}`);
-
-		const bodyParams = [
-			`stock=${stockCode},${orgId}`,
-			"tabName=fulltext",
-			"pageNum=1",
-			"pageSize=30",
-			`seDate=${startYear}-01-01~${endYear + 1}-12-31`,
-		];
-		if (exchange) {
-			bodyParams.push(`column=${exchange}`, `category=${marketConfig.queryCategory}`);
-		} else {
-			bodyParams.push("searchkey=年度报告");
-		}
+		log.info(`Resolved ${stockCode} -> orgId=${orgId}, name=${secName}, exchange=${exchange}`);
 
 		this.crawler.add({
 			url: QUERY_URL,
@@ -166,7 +146,15 @@ class Task {
 				'Origin': 'http://www.cninfo.com.cn',
 				'Referer': 'http://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/search',
 			},
-			body: bodyParams.join("&"),
+			body: [
+				`stock=${stockCode},${orgId}`,
+				"tabName=fulltext",
+				"category=category_ndbg_szsh",
+				"pageNum=1",
+				"pageSize=30",
+				`column=${exchange}`,
+				`seDate=${startYear}-01-01~${endYear + 1}-12-31`,
+			].join("&"),
 			callback: this.queryReports,
 			userParams: { stockCode, orgId, secName, exchange, startYear, endYear },
 		});
