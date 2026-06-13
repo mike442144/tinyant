@@ -92,10 +92,26 @@ class Task {
 			fs.writeFileSync(this.csvPath, '\ufeff' + csvHeaders.join(',') + '\n');
 		}
 
+		const pendingStocks = stocks.filter(stockCode => {
+			const codeDir = path.resolve(resultDir, stockCode);
+			const files = fs.existsSync(codeDir) ? fs.readdirSync(codeDir) : [];
+			for (let y = startYear; y <= endYear; y++) {
+				if (!files.some(f => f.startsWith(`${y}_`) && f.endsWith("_年度报告.pdf"))) return true;
+			}
+			log.info(`${stockCode}: all years ${startYear}-${endYear} already downloaded, skipping.`);
+			return false;
+		});
+
+		if (pendingStocks.length === 0) {
+			log.info(`All stocks already downloaded. Nothing to do.`);
+			return;
+		}
+		log.info(`Pending stocks: ${pendingStocks.join(', ')}`);
+
 		this.crawler.add({
 			url: STOCK_LIST_URL,
 			callback: this.resolveStockId,
-			userParams: { stocks, startYear, endYear },
+			userParams: { stocks: pendingStocks, startYear, endYear },
 		});
 	}
 
