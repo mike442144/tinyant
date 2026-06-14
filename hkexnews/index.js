@@ -5,11 +5,11 @@ import { getLogger } from "../lib/tslog.js";
 import dayjs from "dayjs";
 import papa from "papaparse";
 import minimist from "minimist";
-import assert from "node:assert/strict";
+import { parseDateRangeHkex, sanitizeFilename, extractFiscalYearHk } from "../lib/utils.js";
 
 const argv = minimist(process.argv.slice(2), {
 	string: ['file', 'codes', 'date', 'year', 'category', 'keyword'],
-	boolean: ['annual', 'list', 'pdf-only', 'test'],
+	boolean: ['annual', 'list', 'pdf-only'],
 	default: { count: 30 },
 	alias: { h: 'help' },
 });
@@ -39,7 +39,6 @@ Options:
   --pdf-only          Only download PDF files (skip HTML)
   --list              List results without downloading
   --count <n>         Max results per stock (default: 30, max: 1000)
-  --test              Run self-tests for pure functions
   -h, --help          Show this help message
 
 Examples:
@@ -59,21 +58,6 @@ const SEARCH_URL = "https://www1.hkexnews.hk/search/titleSearchServlet.do";
 const NEWS_BASE = "https://www1.hkexnews.hk";
 
 const csvHeaders = ["code", "secName", "date", "title", "fileType", "fileName", "fileSize", "downloadTime"];
-
-function parseDateRange(dateStr) {
-	if (!dateStr) {
-		const today = dayjs().format("YYYYMMDD");
-		const monthAgo = dayjs().subtract(1, 'month').format("YYYYMMDD");
-		return { from: monthAgo, to: today };
-	}
-	const isoMatch = dateStr.match(/(\d{4}-\d{2}-\d{2})\s*[~-]\s*(\d{4}-\d{2}-\d{2})/);
-	if (isoMatch) {
-		return { from: isoMatch[1].replace(/-/g, ''), to: isoMatch[2].replace(/-/g, '') };
-	}
-	const parts = dateStr.split(/[~-]/).map(p => p.replace(/[^\d]/g, '')).filter(Boolean);
-	if (parts.length >= 2) return { from: parts[0], to: parts[1] };
-	return { from: parts[0], to: parts[0] };
-}
 
 class Task {
 	constructor() {
@@ -116,7 +100,7 @@ class Task {
 			to = `${endYear + 1}1231`;
 			log.info(`Annual report mode: fiscal year ${startYear}-${endYear}`);
 		} else {
-			const range = parseDateRange(argv.date);
+			const range = parseDateRangeHkex(argv.date);
 			from = range.from;
 			to = range.to;
 			log.info(`Date range: ${from}-${to}`);
@@ -273,10 +257,10 @@ class Task {
 		if (isAnnual) {
 			results = results.filter(r => {
 				if (r.FILE_TYPE !== "PDF") return false;
-				const yearMatch = r.TITLE.match(/(\d{4})/);
-				if (!yearMatch) return false;
-				const fy = parseInt(yearMatch[1], 10);
-				return fy >= startYear && fy <= endYear;
+				const fy = extractFiscalYearHk(r.TITLE);
+				if (!fy) return false;
+				const fyNum = parseInt(fy, 10);
+				return fyNum >= startYear && fyNum <= endYear;
 			});
 			log.info(`After annual filter: ${results.length} reports for ${stockCode} (fiscal year ${startYear}-${endYear})`);
 		} else if (argv['pdf-only']) {
@@ -297,17 +281,15 @@ class Task {
 
 		for (const r of results) {
 			let fileName;
-			let year;
+			let date;
 			if (isAnnual) {
-				const yearMatch = r.TITLE.match(/(\d{4})/);
-				year = yearMatch ? yearMatch[1] : "unknown";
-				const safeName = secName.replace(/[\/\\:*?"<>|]/g, "_");
-				fileName = `${year}_${safeName}_年度报告.pdf`;
+				const year = extractFiscalYearHk(r.TITLE) || "unknown";
+				date = year;
+				fileName = `${year}_${sanitizeFilename(secName)}_年度报告.pdf`;
 			} else {
-				const date = r.DATE_TIME?.split(' ')[0]?.replace(/\//g, '') || 'unknown';
+				date = r.DATE_TIME?.split(' ')[0]?.replace(/\//g, '') || 'unknown';
 				const ext = r.FILE_TYPE === "PDF" ? "pdf" : "htm";
-				const safeTitle = r.TITLE.replace(/[\/\\:*?"<>|\n\r]/g, "_").slice(0, 60);
-				fileName = `${date}_${safeTitle}.${ext}`;
+				fileName = `${date}_${sanitizeFilename(r.TITLE)}.${ext}`;
 			}
 			const filePath = path.resolve(codeDir, fileName);
 
@@ -369,59 +351,6 @@ class Task {
 
 		return done();
 	};
-}
-
-if (argv.test) {
-	let pass = 0, fail = 0;
-	const t = (name, fn) => {
-		try { fn(); pass++; console.log(`  ok  ${name}`); }
-		catch (e) { fail++; console.log(`  FAIL ${name}: ${e.message}`); }
-	};
-
-	console.log('parseDateRange (YYYYMMDD output):');
-	t('hyphen separator', () => {
-		const r = parseDateRange('20250101-20250630');
-		assert.equal(r.from, '20250101');
-		assert.equal(r.to, '20250630');
-	});
-	t('tilde separator', () => {
-		const r = parseDateRange('20250101~20250630');
-		assert.equal(r.from, '20250101');
-		assert.equal(r.to, '20250630');
-	});
-	t('ISO input with hyphens', () => {
-		const r = parseDateRange('2025-01-01~2025-06-30');
-		assert.equal(r.from, '20250101');
-		assert.equal(r.to, '20250630');
-	});
-	t('single date', () => {
-		const r = parseDateRange('20250615');
-		assert.equal(r.from, '20250615');
-		assert.equal(r.to, '20250615');
-	});
-	t('empty defaults to last month', () => {
-		const r = parseDateRange('');
-		assert.match(r.from, /^\d{8}$/);
-		assert.match(r.to, /^\d{8}$/);
-	});
-
-	console.log('filename sanitization:');
-	const sanitize = s => s.replace(/[\/\\:*?"<>|\n\r]/g, '_').slice(0, 60);
-	t('replaces illegal chars', () => {
-		assert.equal(sanitize('業績公告:2024/05'), '業績公告_2024_05');
-	});
-	t('truncates at 60 chars', () => {
-		assert.equal(sanitize('業'.repeat(80)).length, 60);
-	});
-
-	console.log('fiscal year regex (first 4-digit number):');
-	const fy = s => s.match(/(\d{4})/)?.[1];
-	t('matches "2024 年報"', () => assert.equal(fy('2024 年報'), '2024'));
-	t('matches "ANNUAL REPORT 2024"', () => assert.equal(fy('ANNUAL REPORT 2024'), '2024'));
-	t('matches "騰訊控股2023年度報告"', () => assert.equal(fy('騰訊控股2023年度報告'), '2023'));
-
-	console.log(`\n${pass} passed, ${fail} failed`);
-	process.exit(fail > 0 ? 1 : 0);
 }
 
 const task = new Task();

@@ -2,6 +2,9 @@
   "name": "tinyant",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node test/cninfo.test.js && node test/hkexnews.test.js"
+  },
   "dependencies": {
     "crawler": "^2.1.0",
     "dayjs": "^1.11.13",
