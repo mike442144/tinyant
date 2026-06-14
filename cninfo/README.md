@@ -20,6 +20,13 @@ npm install
 
 需要的依赖包已在根目录 `package.json` 中定义。
 
+## 运行测试
+
+```bash
+npm test                # 运行全部纯函数测试
+node test/cninfo.test.js  # 只运行本模块的测试
+```
+
 ## 使用方法
 
 ### 基本命令

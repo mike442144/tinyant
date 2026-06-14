@@ -18,6 +18,13 @@
 npm install
 ```
 
+## 运行测试
+
+```bash
+npm test                  # 运行全部纯函数测试
+node test/hkexnews.test.js  # 只运行本模块的测试
+```
+
 ## 使用方法
 
 ### 年度报告模式
@@ -65,7 +72,6 @@ node index.js --codes 00700 --date 20250101-20250630 --count 50
 | `--pdf-only` | 仅下载PDF文件 | - |
 | `--list` | 预览结果不下载 | - |
 | `--count <n>` | 每只股票最大结果数（上限1000） | 30 |
-| `--test` | 运行纯函数自测 | - |
 
 ### 类别代码
 
