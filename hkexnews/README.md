@@ -25,9 +25,9 @@ npm install
 使用 `--annual` 和 `--year` 下载年度报告：
 
 ```bash
-node announcement.js --codes 00700 --annual --year 2020-2025
-node announcement.js --codes 00700,09988 --annual --year 2023-2024
-node announcement.js --file hk_stocks.txt --annual --year 2024
+node index.js --codes 00700 --annual --year 2020-2025
+node index.js --codes 00700,09988 --annual --year 2023-2024
+node index.js --file hk_stocks.txt --annual --year 2024
 ```
 
 ### 公告模式
@@ -36,16 +36,16 @@ node announcement.js --file hk_stocks.txt --annual --year 2024
 
 ```bash
 # 查看腾讯最近公告（预览）
-node announcement.js --codes 00700 --list
+node index.js --codes 00700 --list
 
 # 下载腾讯财务报表类公告
-node announcement.js --codes 00700 --category 40000 --pdf-only
+node index.js --codes 00700 --category 40000 --pdf-only
 
 # 搜索含"業績"的公告
-node announcement.js --codes 00700 --keyword 業績 --pdf-only
+node index.js --codes 00700 --keyword 業績 --pdf-only
 
 # 指定日期范围
-node announcement.js --codes 00700 --date 20250101-20250630 --count 50
+node index.js --codes 00700 --date 20250101-20250630 --count 50
 ```
 
 ### 参数说明
