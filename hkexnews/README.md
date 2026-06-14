@@ -1,4 +1,4 @@
-# 港交所披露易下载器
+# 港交所披露易公告/年度报告下载器
 
 从 hkexnews.hk（港交所披露易）下载港股上市公司公告和年度报告（PDF），支持按类别、关键词、日期范围过滤。
 
@@ -64,7 +64,8 @@ node index.js --codes 00700 --date 20250101-20250630 --count 50
 | **通用** | | |
 | `--pdf-only` | 仅下载PDF文件 | - |
 | `--list` | 预览结果不下载 | - |
-| `--count <n>` | 每只股票最大结果数 | 30 |
+| `--count <n>` | 每只股票最大结果数（上限1000） | 30 |
+| `--test` | 运行纯函数自测 | - |
 
 ### 类别代码
 
@@ -89,6 +90,18 @@ node index.js --codes 00700 --date 20250101-20250630 --count 50
 
 ### 汇总CSV
 - 路径：`./data/hkexnews_ann_YYYY-MM-DD.csv`
+- 编码：UTF-8 with BOM
+
+| 字段 | 说明 |
+|------|------|
+| code | 股票代码 |
+| secName | 公司简称（繁体中文） |
+| date | 年度报告为财年（如 2023），公告为发布日期 |
+| title | 公告原标题 |
+| fileType | 文件类型（PDF/HTM） |
+| fileName | 保存文件名 |
+| fileSize | 文件大小（字节） |
+| downloadTime | 下载时间 |
 
 ## 注意事项
 
