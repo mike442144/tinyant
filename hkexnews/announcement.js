@@ -7,7 +7,8 @@ import papa from "papaparse";
 import minimist from "minimist";
 
 const argv = minimist(process.argv.slice(2), {
-	string: ['file', 'codes', 'date', 'category', 'keyword'],
+	string: ['file', 'codes', 'date', 'year', 'category', 'keyword'],
+	boolean: ['annual', 'list', 'pdf-only'],
 	default: { count: 30 },
 	alias: { h: 'help' },
 });
@@ -15,24 +16,34 @@ const argv = minimist(process.argv.slice(2), {
 if (argv.help) {
 	console.log(`Usage: node announcement.js [options]
 
-下载港股上市公司公告文件（PDF/HTML）数据来源：hkexnews.hk（披露易）。
+下载港股上市公司公告/年度报告（PDF）数据来源：hkexnews.hk（披露易）。
 
 Options:
   --file <path>       Stock codes file (one per line, # for comments)
   --codes <list>      Stock codes, comma-separated (e.g. 00700,09988)
-  --date <range>      Date range, e.g. 20250101-20250630 or 2025-01-01~2025-06-30
-  --category <code>   Tier 1 category code (default: all). Common codes:
-                        10000 = 公告及通告
-                        20000 = 通函
-                        30000 = 上市文件
-                        40000 = 财务报表/ESG
-                        50000 = 翌日披露报表
-                        51500 = 月报表
+
+  Annual report mode:
+  --annual            Download annual reports (年度报告) only
+  --year <range>      Fiscal year range, e.g. 2020-2025 or single year 2023
+
+  General announcement mode:
+  --date <range>      Date range, e.g. 20250101-20250630 (default: last month)
+  --category <code>   Tier 1 category code. Common codes:
+                        10000 = 公告及通告    40000 = 财务报表/ESG
+                        20000 = 通函          50000 = 翌日披露报表
+                        30000 = 上市文件      51500 = 月报表
   --keyword <text>    Title keyword search
+
+  Common:
   --pdf-only          Only download PDF files (skip HTML)
   --list              List results without downloading
   --count <n>         Max results per stock (default: 30, max: 1000)
-  -h, --help          Show this help message`);
+  -h, --help          Show this help message
+
+Examples:
+  node announcement.js --codes 00700 --annual --year 2020-2025
+  node announcement.js --codes 00700 --category 10000 --list
+  node announcement.js --codes 00700 --keyword 業績 --pdf-only`);
 	process.exit(0);
 }
 
@@ -86,8 +97,24 @@ class Task {
 		if (!fs.existsSync(resultDir)) fs.mkdirSync(resultDir, { recursive: true });
 		if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
 
-		const { from, to } = parseDateRange(argv.date);
-		log.info(`Date range: ${from}-${to}`);
+		let from, to, startYear, endYear;
+		if (argv.annual) {
+			if (argv.year) {
+				const parts = argv.year.split("-");
+				startYear = parseInt(parts[0], 10);
+				endYear = parts.length > 1 ? parseInt(parts[1], 10) : startYear;
+			} else {
+				startYear = endYear = dayjs().year();
+			}
+			from = `${startYear}0101`;
+			to = `${endYear + 1}1231`;
+			log.info(`Annual report mode: fiscal year ${startYear}-${endYear}`);
+		} else {
+			const range = parseDateRange(argv.date);
+			from = range.from;
+			to = range.to;
+			log.info(`Date range: ${from}-${to}`);
+		}
 
 		let stocks = [];
 		if (argv.file) {
@@ -103,8 +130,28 @@ class Task {
 		}
 		log.info(`Stock codes loaded: ${stocks.join(', ')}`);
 
-		if (argv.category) log.info(`Category filter: ${argv.category}`);
-		if (argv.keyword) log.info(`Keyword filter: ${argv.keyword}`);
+		if (argv.annual && !argv.list) {
+			const pendingStocks = stocks.filter(stockCode => {
+				const codeDir = path.resolve(resultDir, stockCode);
+				const files = fs.existsSync(codeDir) ? fs.readdirSync(codeDir) : [];
+				for (let y = startYear; y <= endYear; y++) {
+					if (!files.some(f => f.startsWith(`${y}_`) && f.endsWith("_年度报告.pdf"))) return true;
+				}
+				log.info(`${stockCode}: all years ${startYear}-${endYear} already downloaded, skipping.`);
+				return false;
+			});
+			if (pendingStocks.length === 0) {
+				log.info(`All stocks already downloaded. Nothing to do.`);
+				return;
+			}
+			stocks = pendingStocks;
+			log.info(`Pending stocks: ${stocks.join(', ')}`);
+		}
+
+		if (!argv.annual) {
+			if (argv.category) log.info(`Category filter: ${argv.category}`);
+			if (argv.keyword) log.info(`Keyword filter: ${argv.keyword}`);
+		}
 		if (argv['pdf-only']) log.info(`PDF only mode enabled`);
 
 		this.csvPath = path.resolve(resultDir, `${identifier}_${dayjs().format("YYYY-MM-DD")}.csv`);
@@ -115,7 +162,7 @@ class Task {
 		this.crawler.add({
 			url: STOCK_LIST_URL,
 			callback: this.resolveStockId,
-			userParams: { stocks, from, to },
+			userParams: { stocks, from, to, startYear, endYear },
 		});
 	}
 
@@ -125,7 +172,7 @@ class Task {
 			return done();
 		}
 
-		const { stocks, from, to } = res.options.userParams;
+		const { stocks, from, to, startYear, endYear } = res.options.userParams;
 
 		let stockList;
 		try {
@@ -140,7 +187,9 @@ class Task {
 			stockMap.set(item.c, { stockId: item.i, secName: item.n });
 		}
 
-		const t1code = argv.category || '';
+		const isAnnual = argv.annual;
+		const t1code = isAnnual ? '40000' : (argv.category || '');
+		const t2code = isAnnual ? '40100' : '';
 		const title = argv.keyword || '';
 		const count = Math.min(parseInt(argv.count, 10) || 30, 1000);
 
@@ -163,16 +212,17 @@ class Task {
 				`fromDate=${from}`,
 				`toDate=${to}`,
 				`title=${encodeURIComponent(title)}`,
-				'searchType=0',
+				`searchType=${isAnnual ? '1' : '0'}`,
 				`rowRange=${count}`,
 				'lang=zh',
 			];
 			if (t1code) params.push(`t1code=${t1code}`);
+			if (t2code) params.push(`t2code=${t2code}`);
 
 			tasks.push({
 				url: `${SEARCH_URL}?${params.join('&')}`,
 				callback: this.queryResults,
-				userParams: { stockCode, secName, from, to },
+				userParams: { stockCode, secName, from, to, startYear, endYear },
 			});
 		}
 
@@ -189,7 +239,8 @@ class Task {
 			return done();
 		}
 
-		const { stockCode, secName } = res.options.userParams;
+		const { stockCode, secName, startYear, endYear } = res.options.userParams;
+		const isAnnual = argv.annual;
 
 		let data;
 		try {
@@ -207,13 +258,22 @@ class Task {
 			return done();
 		}
 
-		log.info(`Found ${results.length} announcements for ${stockCode} (${secName})`);
+		log.info(`Found ${results.length} results for ${stockCode} (${secName})`);
 
 		if (data.hasNextRow) {
 			log.warn(`${stockCode}: more than ${data.rowRange} results. Use --count to increase or narrow the date range.`);
 		}
 
-		if (argv['pdf-only']) {
+		if (isAnnual) {
+			results = results.filter(r => {
+				if (r.FILE_TYPE !== "PDF") return false;
+				const yearMatch = r.TITLE.match(/(\d{4})/);
+				if (!yearMatch) return false;
+				const fy = parseInt(yearMatch[1], 10);
+				return fy >= startYear && fy <= endYear;
+			});
+			log.info(`After annual filter: ${results.length} reports for ${stockCode} (fiscal year ${startYear}-${endYear})`);
+		} else if (argv['pdf-only']) {
 			results = results.filter(r => r.FILE_TYPE === "PDF");
 			log.info(`After PDF filter: ${results.length} results for ${stockCode}`);
 		}
@@ -230,10 +290,19 @@ class Task {
 		if (!fs.existsSync(codeDir)) fs.mkdirSync(codeDir, { recursive: true });
 
 		for (const r of results) {
-			const date = r.DATE_TIME?.split(' ')[0]?.replace(/\//g, '') || 'unknown';
-			const ext = r.FILE_TYPE === "PDF" ? "pdf" : "htm";
-			const safeTitle = r.TITLE.replace(/[\/\\:*?"<>|\n\r]/g, "_").slice(0, 60);
-			const fileName = `${date}_${safeTitle}.${ext}`;
+			let fileName;
+			let year;
+			if (isAnnual) {
+				const yearMatch = r.TITLE.match(/(\d{4})/);
+				year = yearMatch ? yearMatch[1] : "unknown";
+				const safeName = secName.replace(/[\/\\:*?"<>|]/g, "_");
+				fileName = `${year}_${safeName}_年度报告.pdf`;
+			} else {
+				const date = r.DATE_TIME?.split(' ')[0]?.replace(/\//g, '') || 'unknown';
+				const ext = r.FILE_TYPE === "PDF" ? "pdf" : "htm";
+				const safeTitle = r.TITLE.replace(/[\/\\:*?"<>|\n\r]/g, "_").slice(0, 60);
+				fileName = `${date}_${safeTitle}.${ext}`;
+			}
 			const filePath = path.resolve(codeDir, fileName);
 
 			if (fs.existsSync(filePath)) {
