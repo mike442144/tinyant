@@ -5,16 +5,17 @@ import { getLogger } from "../lib/tslog.js";
 import dayjs from "dayjs";
 import papa from "papaparse";
 import minimist from "minimist";
+import assert from "node:assert/strict";
 
 const argv = minimist(process.argv.slice(2), {
 	string: ['file', 'codes', 'date', 'year', 'category', 'keyword'],
-	boolean: ['annual', 'list', 'pdf-only'],
+	boolean: ['annual', 'list', 'pdf-only', 'test'],
 	default: { count: 30 },
 	alias: { h: 'help' },
 });
 
 if (argv.help) {
-	console.log(`Usage: node announcement.js [options]
+	console.log(`Usage: node index.js [options]
 
 下载港股上市公司公告/年度报告（PDF）数据来源：hkexnews.hk（披露易）。
 
@@ -38,12 +39,13 @@ Options:
   --pdf-only          Only download PDF files (skip HTML)
   --list              List results without downloading
   --count <n>         Max results per stock (default: 30, max: 1000)
+  --test              Run self-tests for pure functions
   -h, --help          Show this help message
 
 Examples:
-  node announcement.js --codes 00700 --annual --year 2020-2025
-  node announcement.js --codes 00700 --category 10000 --list
-  node announcement.js --codes 00700 --keyword 業績 --pdf-only`);
+  node index.js --codes 00700 --annual --year 2020-2025
+  node index.js --codes 00700 --category 10000 --list
+  node index.js --codes 00700 --keyword 業績 --pdf-only`);
 	process.exit(0);
 }
 
@@ -64,8 +66,12 @@ function parseDateRange(dateStr) {
 		const monthAgo = dayjs().subtract(1, 'month').format("YYYYMMDD");
 		return { from: monthAgo, to: today };
 	}
-	const parts = dateStr.split(/[-~]/).map(p => p.replace(/[^\d]/g, ''));
-	if (parts.length >= 2 && parts[0] && parts[1]) return { from: parts[0], to: parts[1] };
+	const isoMatch = dateStr.match(/(\d{4}-\d{2}-\d{2})\s*[~-]\s*(\d{4}-\d{2}-\d{2})/);
+	if (isoMatch) {
+		return { from: isoMatch[1].replace(/-/g, ''), to: isoMatch[2].replace(/-/g, '') };
+	}
+	const parts = dateStr.split(/[~-]/).map(p => p.replace(/[^\d]/g, '')).filter(Boolean);
+	if (parts.length >= 2) return { from: parts[0], to: parts[1] };
 	return { from: parts[0], to: parts[0] };
 }
 
@@ -363,6 +369,59 @@ class Task {
 
 		return done();
 	};
+}
+
+if (argv.test) {
+	let pass = 0, fail = 0;
+	const t = (name, fn) => {
+		try { fn(); pass++; console.log(`  ok  ${name}`); }
+		catch (e) { fail++; console.log(`  FAIL ${name}: ${e.message}`); }
+	};
+
+	console.log('parseDateRange (YYYYMMDD output):');
+	t('hyphen separator', () => {
+		const r = parseDateRange('20250101-20250630');
+		assert.equal(r.from, '20250101');
+		assert.equal(r.to, '20250630');
+	});
+	t('tilde separator', () => {
+		const r = parseDateRange('20250101~20250630');
+		assert.equal(r.from, '20250101');
+		assert.equal(r.to, '20250630');
+	});
+	t('ISO input with hyphens', () => {
+		const r = parseDateRange('2025-01-01~2025-06-30');
+		assert.equal(r.from, '20250101');
+		assert.equal(r.to, '20250630');
+	});
+	t('single date', () => {
+		const r = parseDateRange('20250615');
+		assert.equal(r.from, '20250615');
+		assert.equal(r.to, '20250615');
+	});
+	t('empty defaults to last month', () => {
+		const r = parseDateRange('');
+		assert.match(r.from, /^\d{8}$/);
+		assert.match(r.to, /^\d{8}$/);
+	});
+
+	console.log('filename sanitization:');
+	const sanitize = s => s.replace(/[\/\\:*?"<>|\n\r]/g, '_').slice(0, 60);
+	t('replaces illegal chars', () => {
+		assert.equal(sanitize('業績公告:2024/05'), '業績公告_2024_05');
+	});
+	t('truncates at 60 chars', () => {
+		assert.equal(sanitize('業'.repeat(80)).length, 60);
+	});
+
+	console.log('fiscal year regex (first 4-digit number):');
+	const fy = s => s.match(/(\d{4})/)?.[1];
+	t('matches "2024 年報"', () => assert.equal(fy('2024 年報'), '2024'));
+	t('matches "ANNUAL REPORT 2024"', () => assert.equal(fy('ANNUAL REPORT 2024'), '2024'));
+	t('matches "騰訊控股2023年度報告"', () => assert.equal(fy('騰訊控股2023年度報告'), '2023'));
+
+	console.log(`\n${pass} passed, ${fail} failed`);
+	process.exit(fail > 0 ? 1 : 0);
 }
 
 const task = new Task();

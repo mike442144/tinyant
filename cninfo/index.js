@@ -5,10 +5,11 @@ import { getLogger } from "../lib/tslog.js";
 import dayjs from "dayjs";
 import papa from "papaparse";
 import minimist from "minimist";
+import assert from "node:assert/strict";
 
 const argv = minimist(process.argv.slice(2), {
 	string: ['file', 'codes', 'year', 'date', 'category', 'keyword'],
-	boolean: ['annual', 'list', 'pdf-only'],
+	boolean: ['annual', 'list', 'pdf-only', 'test'],
 	default: { count: 30 },
 	alias: { h: 'help' },
 });
@@ -40,6 +41,7 @@ Options:
   --pdf-only          Only download PDF files (skip HTML)
   --list              List results without downloading
   --count <n>         Max results per stock (default: 30, max: 500)
+  --test              Run self-tests for pure functions
   -h, --help          Show this help message
 
 Examples:
@@ -374,6 +376,57 @@ class Task {
 
 		return done();
 	};
+}
+
+if (argv.test) {
+	let pass = 0, fail = 0;
+	const t = (name, fn) => {
+		try { fn(); pass++; console.log(`  ok  ${name}`); }
+		catch (e) { fail++; console.log(`  FAIL ${name}: ${e.message}`); }
+	};
+
+	console.log('parseDateRange:');
+	t('tilde separator', () => {
+		const r = parseDateRange('2024-01-01~2024-12-31');
+		assert.equal(r.from, '2024-01-01');
+		assert.equal(r.to, '2024-12-31');
+	});
+	t('single date', () => {
+		const r = parseDateRange('2024-06-15');
+		assert.equal(r.from, '2024-06-15');
+		assert.equal(r.to, '2024-06-15');
+	});
+	t('empty defaults to last month', () => {
+		const r = parseDateRange('');
+		assert.match(r.from, /^\d{4}-\d{2}-\d{2}$/);
+		assert.match(r.to, /^\d{4}-\d{2}-\d{2}$/);
+	});
+	t('trims whitespace', () => {
+		const r = parseDateRange('  2024-01-01 ~ 2024-12-31  ');
+		assert.equal(r.from, '2024-01-01');
+		assert.equal(r.to, '2024-12-31');
+	});
+
+	console.log('filename sanitization:');
+	const sanitize = s => s.replace(/[\/\\:*?"<>|\n\r]/g, '_').slice(0, 60);
+	t('replaces illegal chars', () => {
+		assert.equal(sanitize('a/b\\c:d*e?f'), 'a_b_c_d_e_f');
+	});
+	t('truncates at 60 chars', () => {
+		assert.equal(sanitize('x'.repeat(80)).length, 60);
+	});
+	t('strips newlines', () => {
+		assert.equal(sanitize('title\nwith\rbreaks'), 'title_with_breaks');
+	});
+
+	console.log('fiscal year regex:');
+	const fy = s => s.match(/(\d{4})\s*年/)?.[1];
+	t('matches "2023年年度报告"', () => assert.equal(fy('2023年年度报告'), '2023'));
+	t('matches "贵州茅台2024年中期"', () => assert.equal(fy('贵州茅台2024年中期'), '2024'));
+	t('returns undefined when no year', () => assert.equal(fy('分红公告'), undefined));
+
+	console.log(`\n${pass} passed, ${fail} failed`);
+	process.exit(fail > 0 ? 1 : 0);
 }
 
 const task = new Task();
