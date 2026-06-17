@@ -154,6 +154,8 @@ async function fetchDividends(code) {
 			cash: (Number(r.PRETAX_BONUS_RMB) || 0) / 10,
 			// 送股 + 转增 both dilute identically
 			bonus: (Number(r.BONUS_IT_RATIO ?? ((Number(r.BONUS_RATIO) || 0) + (Number(r.IT_RATIO) || 0))) || 0) / 10,
+			allot: 0,
+			allotPrice: 0,
 		}))
 		.filter(e => e.cash > 0 || e.bonus > 0);
 
@@ -161,10 +163,61 @@ async function fetchDividends(code) {
 	return events;
 }
 
+// Fetch 配股 (rights issue) events from Eastmoney's F10 分红融资 interface (pgmx array).
+// Returns events with per-share allotment ratio and subscription price.
+async function fetchRights(code) {
+	const f10 = code.toUpperCase(); // e.g. SH600030 / SZ000001
+	const url = `https://emweb.securities.eastmoney.com/PC_HSF10/BonusFinancing/PageAjax?code=${f10}`;
+	const res = await fetch(url, {
+		headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://emweb.securities.eastmoney.com/' },
+	});
+	const json = JSON.parse(await res.text());
+	const rows = json.pgmx || [];
+
+	const events = rows
+		.filter(r => r.EX_DIVIDEND_DATEE && r.ISSUE_PRICE)
+		.map(r => {
+			// EVENT_EXPLAIN like "每10股配1.5股" -> per-share ratio 0.15
+			const m = /每(\d+(?:\.\d+)?)股配(\d+(?:\.\d+)?)股/.exec(r.EVENT_EXPLAIN || '');
+			const allot = m ? Number(m[2]) / Number(m[1]) : 0;
+			return {
+				date: r.EX_DIVIDEND_DATEE.slice(0, 10),
+				cash: 0,
+				bonus: 0,
+				allot,
+				allotPrice: Number(r.ISSUE_PRICE) || 0,
+			};
+		})
+		.filter(e => e.allot > 0 && e.allotPrice > 0);
+
+	log.info(`Rights issues for ${f10}: ${events.length} events`);
+	return events;
+}
+
+// Merge dividend and rights events by ex-date into one map (same day can carry both).
+function mergeEvents(...lists) {
+	const m = new Map();
+	for (const list of lists) {
+		for (const e of list) {
+			const cur = m.get(e.date) || { date: e.date, cash: 0, bonus: 0, allot: 0, allotPrice: 0 };
+			cur.cash += e.cash;
+			cur.bonus += e.bonus;
+			cur.allot += e.allot;
+			cur.allotPrice = e.allotPrice || cur.allotPrice;
+			m.set(e.date, cur);
+		}
+	}
+	return [...m.values()];
+}
+
 // Proportional (涨跌幅复权) back-adjustment factor, normalized to 1.0 on the first row.
 // On each ex-date the factor steps by prevClose / 除权参考价; otherwise it is held flat,
 // so raw_close * adj_factor exactly preserves daily returns.
-// 除权参考价 = (prevClose - cash) / (1 + bonus)   [rights issues not modeled]
+// 除权参考价 = (prevClose - cash + allot*allotPrice) / (1 + bonus + allot)
+//   cash       每股现金分红
+//   bonus      每股送转股数
+//   allot      每股配股数 (rights issue ratio)
+//   allotPrice 配股价
 function computeAdjFactors(dates, closeByDate, events) {
 	const evByDate = new Map(events.map(e => [e.date, e]));
 	const factors = new Map();
@@ -174,11 +227,11 @@ function computeAdjFactors(dates, closeByDate, events) {
 		const ev = evByDate.get(date);
 		if (ev && i > 0) {
 			const prevClose = closeByDate.get(dates[i - 1]);
-			const ref = (prevClose - ev.cash) / (1 + ev.bonus);
+			const ref = (prevClose - ev.cash + ev.allot * ev.allotPrice) / (1 + ev.bonus + ev.allot);
 			if (ref > 0) {
 				const step = prevClose / ref;
 				factor *= step;
-				log.info(`ex-div ${date}: cash=${ev.cash} bonus=${ev.bonus} -> factor x${step.toFixed(6)} = ${factor.toFixed(6)}`);
+				log.info(`ex-date ${date}: cash=${ev.cash} bonus=${ev.bonus} allot=${ev.allot}@${ev.allotPrice} -> factor x${step.toFixed(6)} = ${factor.toFixed(6)}`);
 			}
 		}
 		factors.set(date, factor);
@@ -202,7 +255,8 @@ async function main() {
 
 	for (const code of codes) {
 		log.info(`=== ${code} ===`);
-		const [raw, events] = await Promise.all([fetchKline(code), fetchDividends(code)]);
+		const [raw, divs, rights] = await Promise.all([fetchKline(code), fetchDividends(code), fetchRights(code)]);
+		const events = mergeEvents(divs, rights);
 
 		const rawMap = dedupeByDate(raw);
 		const dates = [...rawMap.keys()].sort((a, b) => a.localeCompare(b));
