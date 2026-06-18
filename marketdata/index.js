@@ -6,6 +6,7 @@ import dayjs from 'dayjs';
 import papa from 'papaparse';
 import minimist from 'minimist';
 import parquet from 'parquetjs';
+import { fileURLToPath } from 'node:url';
 
 const argv = minimist(process.argv.slice(2), {
 	string: ['codes', 'date'],
@@ -60,14 +61,14 @@ const parquetSchema = new parquet.ParquetSchema({
 	adj_factor: { type: 'DOUBLE', optional: true },
 });
 
-function addExchangePrefix(code) {
+export function addExchangePrefix(code) {
 	if (/^(sh|sz|hk)/i.test(code)) return code.toLowerCase();
 	if (/^[69]/.test(code)) return 'sh' + code;
 	if (/^[03]/.test(code)) return 'sz' + code;
 	return code;
 }
 
-function generateSegments(from, to) {
+export function generateSegments(from, to) {
 	const segments = [];
 	let start = dayjs(from);
 	const end = dayjs(to);
@@ -195,7 +196,7 @@ async function fetchRights(code) {
 }
 
 // Merge dividend and rights events by ex-date into one map (same day can carry both).
-function mergeEvents(...lists) {
+export function mergeEvents(...lists) {
 	const m = new Map();
 	for (const list of lists) {
 		for (const e of list) {
@@ -218,7 +219,7 @@ function mergeEvents(...lists) {
 //   bonus      每股送转股数
 //   allot      每股配股数 (rights issue ratio)
 //   allotPrice 配股价
-function computeAdjFactors(dates, closeByDate, events) {
+export function computeAdjFactors(dates, closeByDate, events) {
 	const evByDate = new Map(events.map(e => [e.date, e]));
 	const factors = new Map();
 	let factor = 1;
@@ -307,7 +308,11 @@ async function main() {
 	log.info('All done!');
 }
 
-main().catch(e => {
-	log.error(e);
-	process.exit(1);
-});
+// Only run when invoked directly (node index.js ...), not when imported by tests.
+const isMainEntry = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMainEntry) {
+	main().catch(e => {
+		log.error(e);
+		process.exit(1);
+	});
+}

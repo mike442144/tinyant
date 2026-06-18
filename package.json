@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/cninfo.test.js && node test/hkexnews.test.js"
+    "test": "node test/cninfo.test.js && node test/hkexnews.test.js && node test/marketdata.test.js"
   },
   "dependencies": {
     "crawler": "^2.1.0",
