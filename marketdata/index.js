@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const argv = minimist(process.argv.slice(2), {
 	string: ['codes', 'date'],
+	boolean: ['force'],
 	alias: { h: 'help' },
 });
 
@@ -27,10 +28,15 @@ adj_factor 用"涨跌幅复权(比例复权)"自行计算：除权息日按官�
   后复权 close = close × adj_factor
   前复权 close = close × adj_factor / adj_factor(最新一天)
 
+默认增量更新：若 ./data/<code>/<code>_kline.csv 已存在，只下载最后一个交易日
+之后的新数据并追加；用 --force 忽略已有文件、重新全量下载。
+全量下载时自动从上市日开始抓取（东方财富 f189），跳过上市前的空白年份。
+
 Options:
   --codes <list>    Stock codes, comma-separated (e.g. sh600519,sz000001)
                     Prefix sh/sz is auto-detected if omitted
   --date <range>    Date range, e.g. 2020-01-01~2025-12-31 (default: full history)
+  --force           Ignore existing files; re-download full history
   -h, --help        Show this help message
 
 Examples:
@@ -82,8 +88,9 @@ export function generateSegments(from, to) {
 }
 
 // Fetch the unadjusted (day) daily series for the range. Returns [...rows].
-function fetchKline(code) {
-	const fromDate = argv.date ? argv.date.split('~')[0].trim() : '2000-01-01';
+// fromOverride (incremental mode) takes precedence over --date for the start date.
+function fetchKline(code, fromOverride) {
+	const fromDate = fromOverride || (argv.date ? argv.date.split('~')[0].trim() : '2000-01-01');
 	const toDate = argv.date ? (argv.date.split('~')[1]?.trim() || dayjs().format('YYYY-MM-DD')) : dayjs().format('YYYY-MM-DD');
 
 	log.info(`Fetching ${code} from ${fromDate} to ${toDate}`);
@@ -195,6 +202,24 @@ async function fetchRights(code) {
 	return events;
 }
 
+// Listing (IPO) date from Eastmoney's quote API (field f189, format YYYYMMDD).
+// Used as the start floor so a fresh download skips empty pre-listing years.
+// Returns 'YYYY-MM-DD' or null if unavailable.
+async function fetchListingDate(code) {
+	const bare = code.replace(/^(sh|sz|hk)/i, '');
+	const market = code.startsWith('sz') ? '0' : '1'; // SH/STAR=1, SZ/ChiNext=0
+	const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${market}.${bare}&fields=f189`;
+	try {
+		const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+		const json = JSON.parse(await res.text());
+		const d = String(json.data?.f189 ?? '');
+		if (/^\d{8}$/.test(d)) return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+	} catch (e) {
+		log.warn(`Listing date fetch failed for ${bare}: ${e.message}`);
+	}
+	return null;
+}
+
 // Merge dividend and rights events by ex-date into one map (same day can carry both).
 export function mergeEvents(...lists) {
 	const m = new Map();
@@ -240,6 +265,18 @@ export function computeAdjFactors(dates, closeByDate, events) {
 	return factors;
 }
 
+// Read an existing kline CSV back into Tencent-style raw rows [date,open,close,high,low,volume].
+// adj_factor is intentionally dropped — it is recomputed over the full merged series.
+function readExistingRaw(csvPath) {
+	if (!fs.existsSync(csvPath)) return [];
+	const text = fs.readFileSync(csvPath, 'utf8').trim();
+	if (!text) return [];
+	const parsed = papa.parse(text, { header: true, skipEmptyLines: true });
+	return parsed.data
+		.filter(r => r.date)
+		.map(r => [r.date, r.open, r.close, r.high, r.low, r.volume]);
+}
+
 async function main() {
 	if (!argv.codes) {
 		console.log('Use --codes to specify stock codes. --help for usage.');
@@ -256,15 +293,49 @@ async function main() {
 
 	for (const code of codes) {
 		log.info(`=== ${code} ===`);
-		const [raw, divs, rights] = await Promise.all([fetchKline(code), fetchDividends(code), fetchRights(code)]);
+
+		const outDir = path.join(resultDir, code);
+		const csvPath = path.join(outDir, `${code}_kline.csv`);
+
+		// Incremental: reuse existing rows, fetch only from the last stored date onward.
+		const existing = argv.force ? [] : readExistingRaw(csvPath);
+		const lastDate = existing.length ? existing.at(-1)[0] : null;
+
+		// Decide the fetch start. Incremental -> last stored date. Fresh -> listing date
+		// floor (skip empty pre-listing years), honoring a later --date start if given.
+		let startOverride = lastDate || undefined;
+		if (lastDate) {
+			log.info(`Incremental: ${existing.length} existing rows up to ${lastDate}, fetching from ${lastDate}`);
+		} else {
+			const listingDate = await fetchListingDate(code);
+			const reqStart = argv.date ? argv.date.split('~')[0].trim() : null;
+			if (listingDate) {
+				startOverride = reqStart && reqStart > listingDate ? reqStart : listingDate;
+				log.info(`Listing date ${listingDate}; fetching from ${startOverride}`);
+			} else {
+				startOverride = reqStart || undefined; // fall back to fetchKline default (2000-01-01)
+			}
+		}
+
+		const [raw, divs, rights] = await Promise.all([
+			fetchKline(code, startOverride),
+			fetchDividends(code),
+			fetchRights(code),
+		]);
 		const events = mergeEvents(divs, rights);
 
-		const rawMap = dedupeByDate(raw);
+		// Merge existing + newly fetched; newly fetched wins on overlap (corrections).
+		const rawMap = dedupeByDate([...existing, ...raw]);
 		const dates = [...rawMap.keys()].sort((a, b) => a.localeCompare(b));
 
-		log.info(`Unique records: ${dates.length}`);
+		const newCount = dates.length - existing.length;
+		log.info(`Unique records: ${dates.length} (${newCount} new)`);
 		if (dates.length === 0) {
 			log.warn(`No data for ${code}, skipping`);
+			continue;
+		}
+		if (existing.length && newCount === 0) {
+			log.info(`${code} already up to date, nothing to append`);
 			continue;
 		}
 
@@ -275,7 +346,6 @@ async function main() {
 			if (diff > 15) log.warn(`Gap: ${dates[i - 1]} -> ${dates[i]} (${Math.round(diff)}d)`);
 		}
 
-		const outDir = path.join(resultDir, code);
 		fs.mkdirSync(outDir, { recursive: true });
 
 		const closeByDate = new Map(dates.map(d => [d, Number(rawMap.get(d)[2])]));
@@ -294,7 +364,6 @@ async function main() {
 			};
 		});
 
-		const csvPath = path.join(outDir, `${code}_kline.csv`);
 		fs.writeFileSync(csvPath, papa.unparse(rows, { columns: CSV_COLUMNS, newline: '\n' }) + '\n');
 		log.info(`CSV: ${csvPath} (${rows.length} rows)`);
 
