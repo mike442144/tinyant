@@ -89,57 +89,27 @@ export function generateSegments(from, to) {
 
 // Fetch the unadjusted (day) daily series for the range. Returns [...rows].
 // fromOverride (incremental mode) takes precedence over --date for the start date.
-function fetchKline(code, fromOverride) {
-	const fromDate = fromOverride || (argv.date ? argv.date.split('~')[0].trim() : '2000-01-01');
+async function fetchKline(code, fromOverride) {
+	const fromDate = fromOverride || (argv.date ? argv.date.split('~')[0].trim() : '2010-01-01');
 	const toDate = argv.date ? (argv.date.split('~')[1]?.trim() || dayjs().format('YYYY-MM-DD')) : dayjs().format('YYYY-MM-DD');
 
 	log.info(`Fetching ${code} from ${fromDate} to ${toDate}`);
 
-	const segments = generateSegments(fromDate, toDate);
-	log.info(`Split into ${segments.length} segments (~6 months each)`);
+	const url = `https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=${code}&scale=240&ma=no&datalen=10000`;
 
-	const allData = [];
-
-	return new Promise((resolve) => {
-		const c = new Crawler({
-			maxConnections: 1,
-			rateLimit: 1500,
-			retries: 3,
-			retryInterval: 5000,
-			timeout: 20000,
-			encoding: null,
-			jQuery: false,
-			callback: (err, res, done) => {
-				if (err) {
-					log.error('FAIL', res?.options?.userParams?.label, err.message);
-					done();
-					return;
-				}
-				try {
-					const text = Buffer.from(res.body).toString('utf8');
-					const json = JSON.parse(text);
-					const stockData = json.data?.[code];
-					if (json.code === 0 && stockData) {
-						const dayData = stockData.day || [];
-						const label = res.options.userParams.label;
-						log.info(`${label} -> ${dayData.length} records`,
-							dayData.length > 0 ? `(${dayData[0][0]} ~ ${dayData.at(-1)[0]})` : '');
-						allData.push(...dayData);
-					}
-				} catch (e) {
-					log.error('Parse error:', e.message);
-				}
-				done();
-			},
-		});
-
-		c.on('drain', () => resolve(allData));
-
-		for (const [s, e] of segments) {
-			const url = `http://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},day,${s},${e},320,`;
-			c.add({ url, userParams: { label: `${s}~${e}` } });
-		}
-	});
+	try {
+		const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+		const arr = JSON.parse(await res.text());
+		const rows = (Array.isArray(arr) ? arr : [])
+			.filter(r => r.day >= fromDate)
+			.map(r => [r.day, r.open, r.close, r.high, r.low, String(Math.round(Number(r.volume) / 100))]);
+		log.info(`${code} -> ${rows.length} records`,
+			rows.length > 0 ? `(${rows[0][0]} ~ ${rows.at(-1)[0]})` : '');
+		return rows;
+	} catch (e) {
+		log.error(`FAIL ${code}: ${e.message}`);
+		return [];
+	}
 }
 
 // Fetch ex-dividend / ex-rights events from Eastmoney for the bare 6-digit code.
@@ -301,6 +271,11 @@ async function main() {
 		const existing = argv.force ? [] : readExistingRaw(csvPath);
 		const lastDate = existing.length ? existing.at(-1)[0] : null;
 
+		if (lastDate && lastDate >= dayjs().subtract(1, 'day').format('YYYY-MM-DD')) {
+			log.info(`${code} already up to date (through ${lastDate}), skipping`);
+			continue;
+		}
+
 		// Decide the fetch start. Incremental -> last stored date. Fresh -> listing date
 		// floor (skip empty pre-listing years), honoring a later --date start if given.
 		let startOverride = lastDate || undefined;
@@ -317,12 +292,7 @@ async function main() {
 			}
 		}
 
-		const [raw, divs, rights] = await Promise.all([
-			fetchKline(code, startOverride),
-			fetchDividends(code),
-			fetchRights(code),
-		]);
-		const events = mergeEvents(divs, rights);
+		const raw = await fetchKline(code, startOverride);
 
 		// Merge existing + newly fetched; newly fetched wins on overlap (corrections).
 		const rawMap = dedupeByDate([...existing, ...raw]);
@@ -338,6 +308,12 @@ async function main() {
 			log.info(`${code} already up to date, nothing to append`);
 			continue;
 		}
+
+		const [divs, rights] = await Promise.all([
+			fetchDividends(code),
+			fetchRights(code),
+		]);
+		const events = mergeEvents(divs, rights);
 
 		log.info(`Range: ${dates[0]} ~ ${dates.at(-1)}`);
 
