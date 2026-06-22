@@ -59,7 +59,6 @@ const TOP_SEARCH_URL = "http://www.cninfo.com.cn/new/information/topSearch/query
 const QUERY_URL = "http://www.cninfo.com.cn/new/hisAnnouncement/query";
 const STATIC_BASE = "http://static.cninfo.com.cn/";
 
-const FILTER_KEYWORDS = ["摘要", "英文", "更正", "补充", "已取消"];
 const csvHeaders = ["code", "secName", "date", "title", "fileType", "fileName", "fileSize", "downloadTime"];
 
 class Task {
@@ -257,14 +256,20 @@ class Task {
 
 		let filtered;
 		if (isAnnual) {
-			filtered = announcements.filter(a => {
+			const byYear = new Map();
+			for (const a of announcements) {
 				const title = a.announcementTitle || "";
-				if (FILTER_KEYWORDS.some(kw => title.includes(kw))) return false;
 				const yearMatch = title.match(/(\d{4})\s*年/);
-				if (!yearMatch) return false;
+				if (!yearMatch) continue;
 				const fy = parseInt(yearMatch[1], 10);
-				return fy >= startYear && fy <= endYear;
-			});
+				if (fy < startYear || fy > endYear) continue;
+				const size = a.adjunctSize || 0;
+				const prev = byYear.get(fy);
+				if (!prev || size > (prev.adjunctSize || 0)) {
+					byYear.set(fy, a);
+				}
+			}
+			filtered = [...byYear.values()];
 			log.info(`After annual filter: ${filtered.length} main reports for ${stockCode} (fiscal year ${startYear}-${endYear})`);
 		} else {
 			filtered = announcements;
