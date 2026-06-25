@@ -51,6 +51,9 @@ console.log('extractFiscalYearHk:');
 t('matches "2024 年報"', () => assert.equal(extractFiscalYearHk('2024 年報'), '2024'));
 t('matches "ANNUAL REPORT 2024"', () => assert.equal(extractFiscalYearHk('ANNUAL REPORT 2024'), '2024'));
 t('matches "騰訊控股2023年度報告"', () => assert.equal(extractFiscalYearHk('騰訊控股2023年度報告'), '2023'));
+t('matches Chinese numerals "二零二五年年度報告"', () => assert.equal(extractFiscalYearHk('二零二五年年度報告'), '2025'));
+t('matches Chinese numerals "二零二零年年度報告"', () => assert.equal(extractFiscalYearHk('二零二零年年度報告'), '2020'));
+t('matches Chinese numerals "二零一八年年度報告"', () => assert.equal(extractFiscalYearHk('二零一八年年度報告'), '2018'));
 t('returns undefined when no digits', () => assert.equal(extractFiscalYearHk('公告'), undefined));
 
 console.log(`\n[hkexnews] ${pass} passed, ${fail} failed`);
