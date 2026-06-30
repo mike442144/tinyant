@@ -10,7 +10,7 @@ import { parseDateRangeCninfo, sanitizeFilename, extractFiscalYearCn } from "../
 const argv = minimist(process.argv.slice(2), {
 	string: ['file', 'codes', 'year', 'date', 'category', 'keyword'],
 	boolean: ['annual', 'list', 'pdf-only'],
-	default: { count: 30 },
+	default: { pageSize: 30 },
 	alias: { h: 'help' },
 });
 
@@ -40,7 +40,7 @@ Options:
   Common:
   --pdf-only          Only download PDF files (skip HTML)
   --list              List results without downloading
-  --count <n>         Max results per stock (default: 30, max: 500)
+  --pageSize <n>      Results per page (default: 30, max: 500)
   -h, --help          Show this help message
 
 Examples:
@@ -200,14 +200,41 @@ class Task {
 
 		const isAnnual = argv.annual;
 		const category = isAnnual ? "category_ndbg_szsh" : (argv.category || "");
-		const count = Math.min(parseInt(argv.count, 10) || 30, 500);
+		const pageSize = Math.min(parseInt(argv.pageSize, 10) || 30, 500);
 		const keyword = argv.keyword || '';
+
+		// Start pagination from page 1
+		this.fetchPage({
+			pageNum: 1,
+			pageSize,
+			stockCode,
+			orgId,
+			secName,
+			exchange,
+			category,
+			keyword,
+			dateFrom,
+			dateTo,
+			startYear,
+			endYear,
+			isAnnual,
+			allAnnouncements: []
+		});
+
+		return done();
+	};
+
+	fetchPage = (params) => {
+		const {
+			pageNum, pageSize, stockCode, orgId, secName, exchange,
+			category, keyword, dateFrom, dateTo, startYear, endYear, isAnnual, allAnnouncements
+		} = params;
 
 		const bodyParts = [
 			`stock=${stockCode},${orgId}`,
 			"tabName=fulltext",
-			"pageNum=1",
-			`pageSize=${count}`,
+			`pageNum=${pageNum}`,
+			`pageSize=${pageSize}`,
 			`column=${exchange}`,
 			`seDate=${dateFrom}~${dateTo}`,
 		];
@@ -223,41 +250,64 @@ class Task {
 				'Referer': 'http://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/search',
 			},
 			body: bodyParts.join("&"),
-			callback: this.queryReports,
-			userParams: { stockCode, orgId, secName, exchange, startYear, endYear },
-		});
+			callback: (err, res, done) => {
+				if (err) {
+					log.error(err);
+					return done();
+				}
 
-		return done();
+				let data;
+				try {
+					data = JSON.parse(res.body);
+				} catch (e) {
+					log.error(`Failed to parse query response for ${stockCode} page ${pageNum}: ${e.message}`);
+					return done();
+				}
+
+				const announcements = data.announcements || [];
+				const updatedAnnouncements = [...allAnnouncements, ...announcements];
+
+				// cninfo's `totalpages` field is unreliable (often returns 1 even when
+				// more pages exist), so derive the page count from the record total.
+				const totalRecords = data.totalRecordNum || data.totalAnnouncement || 0;
+				const totalPages = totalRecords > 0 ? Math.ceil(totalRecords / pageSize) : 0;
+
+				log.info(`Found ${announcements.length} announcements on page ${pageNum} for ${stockCode} (${secName}), total: ${updatedAnnouncements.length}/${totalRecords}`);
+
+				// Check if there are more pages (guard against empty pages to avoid loops)
+				if (announcements.length > 0 && pageNum < totalPages) {
+					log.info(`${stockCode}: fetching page ${pageNum + 1} of ${totalPages}`);
+					this.fetchPage({
+						...params,
+						pageNum: pageNum + 1,
+						allAnnouncements: updatedAnnouncements
+					});
+				} else {
+					// No more pages, process all accumulated announcements
+					this.processAllAnnouncements({
+						stockCode,
+						secName,
+						startYear,
+						endYear,
+						isAnnual,
+						allAnnouncements: updatedAnnouncements
+					});
+				}
+
+				return done();
+			},
+		});
 	};
 
-	queryReports = (err, res, done) => {
-		if (err) {
-			log.error(err);
-			return done();
-		}
+	processAllAnnouncements = (params) => {
+		const { stockCode, secName, startYear, endYear, isAnnual, allAnnouncements } = params;
 
-		const { stockCode, secName, startYear, endYear } = res.options.userParams;
-		const isAnnual = argv.annual;
-
-		let data;
-		try {
-			data = JSON.parse(res.body);
-		} catch (e) {
-			log.error(`Failed to parse query response for ${stockCode}: ${e.message}`);
-			return done();
-		}
-
-		const announcements = data.announcements || [];
-		log.info(`Found ${announcements.length} announcements for ${stockCode} (${secName})`);
-
-		if (data.hasMore && data.totalpages > 1) {
-			log.warn(`${stockCode}: ${data.totalpages} pages of results, only page 1 processed. Use --count to increase.`);
-		}
+		log.info(`Processing ${allAnnouncements.length} total announcements for ${stockCode} (${secName})`);
 
 		let filtered;
 		if (isAnnual) {
 			const byYear = new Map();
-			for (const a of announcements) {
+			for (const a of allAnnouncements) {
 				const title = a.announcementTitle || "";
 				const yearMatch = title.match(/(\d{4})\s*年/);
 				if (!yearMatch) continue;
@@ -272,7 +322,7 @@ class Task {
 			filtered = [...byYear.values()];
 			log.info(`After annual filter: ${filtered.length} main reports for ${stockCode} (fiscal year ${startYear}-${endYear})`);
 		} else {
-			filtered = announcements;
+			filtered = allAnnouncements;
 			if (argv['pdf-only']) {
 				filtered = filtered.filter(a => (a.adjunctType || "").toLowerCase() === "pdf");
 				log.info(`After PDF filter: ${filtered.length} results for ${stockCode}`);
@@ -285,7 +335,7 @@ class Task {
 				const type = a.adjunctType || 'PDF';
 				console.log(`${stockCode}\t${date}\t${type}\t${a.announcementTitle}`);
 			}
-			return done();
+			return;
 		}
 
 		const codeDir = path.resolve(resultDir, stockCode);
@@ -328,8 +378,6 @@ class Task {
 				},
 			});
 		}
-
-		return done();
 	};
 
 	downloadFile = (err, res, done) => {
