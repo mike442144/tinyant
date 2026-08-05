@@ -8,7 +8,7 @@ import minimist from "minimist";
 import { parseDateRangeHkex, sanitizeFilename, extractFiscalYearHk } from "../lib/utils.js";
 
 const argv = minimist(process.argv.slice(2), {
-	string: ['file', 'codes', 'date', 'year', 'category', 'keyword'],
+	string: ['file', 'codes', 'date', 'year', 'category', 'keyword', 'match'],
 	boolean: ['annual', 'list', 'pdf-only'],
 	default: { count: 30 },
 	alias: { h: 'help' },
@@ -33,7 +33,8 @@ Options:
                         10000 = 公告及通告    40000 = 财务报表/ESG
                         20000 = 通函          50000 = 翌日披露报表
                         30000 = 上市文件      51500 = 月报表
-  --keyword <text>    Title keyword search
+  --keyword <text>    Title keyword search (server-side)
+  --match <text>      Client-side title filter (substring match, supports multiple keywords separated by +)
 
   Common:
   --pdf-only          Only download PDF files (skip HTML)
@@ -142,6 +143,7 @@ class Task {
 			if (argv.category) log.info(`Category filter: ${argv.category}`);
 			if (argv.keyword) log.info(`Keyword filter: ${argv.keyword}`);
 		}
+		if (argv.match) log.info(`Match filter: ${argv.match}`);
 		if (argv['pdf-only']) log.info(`PDF only mode enabled`);
 
 		this.csvPath = path.resolve(resultDir, `${identifier}_${dayjs().format("YYYY-MM-DD")}.csv`);
@@ -266,6 +268,12 @@ class Task {
 		} else if (argv['pdf-only']) {
 			results = results.filter(r => r.FILE_TYPE === "PDF");
 			log.info(`After PDF filter: ${results.length} results for ${stockCode}`);
+		}
+
+		if (argv.match) {
+			const keywords = argv.match.split('+');
+			results = results.filter(r => keywords.every(kw => r.TITLE.includes(kw)));
+			log.info(`After match filter (${argv.match}): ${results.length} results for ${stockCode}`);
 		}
 
 		if (argv.list) {
