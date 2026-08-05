@@ -3,9 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/cninfo.test.js && node test/hkexnews.test.js && node test/marketdata.test.js"
+    "test": "node test/cninfo.test.js && node test/hkexnews.test.js && node test/marketdata.test.js && node test/landinfo.test.js"
   },
   "dependencies": {
+    "cheerio": "^1.2.0",
     "crawler": "^2.1.0",
     "dayjs": "^1.11.13",
     "minimist": "^1.2.8",
