@@ -18,13 +18,13 @@ const argv = minimist(process.argv.slice(2), {
 
 const HELP = `Usage: node index.js --city <城市> --keyword <关键词> [options]
 
-查询一线城市土地出让/成交地块详情。数据源：
+查询城市土地出让/成交地块详情。数据源：
   北京: 北京市规划和自然资源委员会土地市场 (JSON API)
   深圳: 深圳公共资源交易中心 (JSON API)
-  上海/广州: 自然资源部中国土地市场网 landchina.mnr.gov.cn 成交公示
+  其他任意城市: 自然资源部中国土地市场网 landchina.mnr.gov.cn 成交公示
 
 Options:
-  --city <name>       城市: 北京/上海/广州/深圳 (必填)
+  --city <name>       城市, 如 北京/上海/深圳/苏州/杭州, 任意城市均可 (必填)
   --keyword <text>    宗地编号或位置关键词 (必填)
   --date <range>      日期范围, e.g. 2026-01-01~2026-08-31 (默认: 最近一个月)
   --list              仅列出匹配结果, 不抓取详情
@@ -34,7 +34,8 @@ Options:
 Examples:
   node index.js --city 北京 --keyword 京土储挂 --list
   node index.js --city 深圳 --keyword G13111-0115 --date 2026-01-01~2026-08-31
-  node index.js --city 上海 --keyword 松江 --date 2026-06-01~2026-08-05`;
+  node index.js --city 上海 --keyword 松江 --date 2026-06-01~2026-08-05
+  node index.js --city 苏州 --keyword 工业园区 --date 2026-07-01~2026-08-05`;
 
 if (argv.help) {
 	console.log(HELP);
@@ -63,10 +64,12 @@ const CITY_ALIASES = {
 	深圳: "深圳", shenzhen: "深圳", sz: "深圳",
 };
 
+// 北京/深圳走本地 JSON API, 其余任意城市走 landchina 全国成交公示
 export function resolveCity(s) {
 	if (!s) return null;
-	const key = String(s).trim().replace(/市$/, "").toLowerCase();
-	return CITY_ALIASES[key] || CITY_ALIASES[String(s).trim().replace(/市$/, "")] || null;
+	const trimmed = String(s).trim().replace(/市$/, "");
+	if (!trimmed) return null;
+	return CITY_ALIASES[trimmed.toLowerCase()] || CITY_ALIASES[trimmed] || trimmed;
 }
 
 export function normalizeBeijing(item) {
@@ -253,7 +256,7 @@ class Task {
 	start() {
 		const city = resolveCity(argv.city);
 		if (!city) {
-			log.error(`未知城市: ${argv.city || "(空)"}，支持 北京/上海/广州/深圳`);
+			log.error("请通过 --city 提供城市名, 如 北京/深圳/苏州");
 			console.log(HELP);
 			process.exit(1);
 		}
@@ -372,7 +375,7 @@ class Task {
 		});
 	}
 
-	// ---- 上海/广州 (landchina) ----
+	// ---- 其他城市 (landchina 全国成交公示) ----
 	fetchLandchinaPage(page) {
 		this.crawler.add({
 			url: landchinaPageUrl(page),
@@ -386,14 +389,13 @@ class Task {
 				const latest = items[0].date;
 				const oldest = items[items.length - 1].date;
 				log.info(`landchina: page ${page}, ${items.length} items (${oldest} ~ ${latest})`);
-				const cityKey = `${this.city}市`;
 				for (const item of items) {
-					if (!item.title.includes(cityKey) && !item.title.includes(this.keyword)) continue;
+					if (!item.title.includes(this.city)) continue;
 					this.crawler.add({
 						url: item.url,
 						callback: (e2, r2, d2) => {
 							if (e2) { log.error(e2); return d2(); }
-							const text = String(r2.body).replace(/<[^>]+>/g, "");
+							const text = item.title + String(r2.body).replace(/<[^>]+>/g, "");
 							if (!text.includes(this.keyword)) return d2();
 							const parcels = extractLandchinaDetail(r2.body);
 							if (parcels.length === 0) {

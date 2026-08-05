@@ -23,7 +23,8 @@ console.log('resolveCity:');
 t('中文名', () => assert.equal(resolveCity('深圳'), '深圳'));
 t('带"市"后缀', () => assert.equal(resolveCity('北京市'), '北京'));
 t('英文别名', () => assert.equal(resolveCity('sh'), '上海'));
-t('未知城市返回 null', () => assert.equal(resolveCity('杭州'), null));
+t('二线城市透传', () => assert.equal(resolveCity('苏州'), '苏州'));
+t('带"市"后缀的二线城市', () => assert.equal(resolveCity('苏州市'), '苏州'));
 t('空值返回 null', () => assert.equal(resolveCity(''), null));
 
 console.log('normalizeArea / normalizePrice:');
