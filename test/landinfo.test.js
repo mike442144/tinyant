@@ -11,6 +11,22 @@ import {
 	parseLandchinaIndex,
 	landchinaPageUrl,
 	extractLandchinaDetail,
+	hangzhouListUrl,
+	parseHangzhouList,
+	extractHangzhouDetail,
+	parseChengduList,
+	extractChengduDetail,
+	suzhouListUrl,
+	suzhouDetailPathUrl,
+	parseSuzhouList,
+	parseSuzhouDetailPath,
+	normalizeDealDate,
+	extractSuzhouDetail,
+	kunshanPageUrl,
+	parseKunshanList,
+	extractKunshanDetail,
+	parseLandjsList,
+	normalizeLandjsParcel,
 } from "../landinfo/index.js";
 
 let pass = 0, fail = 0;
@@ -31,6 +47,7 @@ console.log('normalizeArea / normalizePrice:');
 t('公顷 -> 平方米', () => assert.equal(normalizeArea('1.512453公顷'), '15124.53'));
 t('平方米原样保留', () => assert.equal(normalizeArea('31329.369平方米'), '31329.369'));
 t('带千分位', () => assert.equal(normalizeArea('1,234平方米'), '1234'));
+t('亩 -> 平方米', () => assert.equal(normalizeArea('34.3亩'), '22866.667'));
 t('亿元 -> 万元', () => assert.equal(normalizePrice('1.2亿元'), '12000'));
 t('万元原样保留', () => assert.equal(normalizePrice('14362万元'), '14362'));
 t('空值返回空串', () => assert.equal(normalizeArea(''), ''));
@@ -139,6 +156,220 @@ t('多地块表格', () => {
 });
 t('无地块表格返回空', () => {
 	assert.equal(extractLandchinaDetail('<table><tr><td>无关内容</td></tr></table>').length, 0);
+});
+
+console.log('hangzhou:');
+t('别名', () => {
+	assert.equal(resolveCity('hz'), '杭州');
+	assert.equal(resolveCity('cd'), '成都');
+});
+t('列表 URL 含分页参数', () => {
+	const url = hangzhouListUrl(2, 15);
+	assert.ok(url.includes('pageId=1228962705'));
+	assert.ok(decodeURIComponent(url).includes('"pageNo":2'));
+});
+t('列表解析', () => {
+	const body = JSON.stringify({ success: true, data: { html: '<div count="544" pageNo="1"><li><span class="fr">[2026-07-28]</span><a title="杭政储出[2026]55-56号地块挂牌出让竞得入选情况表" href="/col/col1228962705/art/2026/art_d113.html">杭政储出[2026]55-56号地块挂牌出让竞得入选情况表</a></li></div>' } });
+	const { count, items } = parseHangzhouList(body);
+	assert.equal(count, 544);
+	assert.equal(items.length, 1);
+	assert.equal(items[0].date, '2026-07-28');
+	assert.ok(items[0].url.startsWith('https://ghzy.hangzhou.gov.cn/col/'));
+});
+t('列表非法响应返回空', () => {
+	assert.equal(parseHangzhouList('<html>').items.length, 0);
+	assert.equal(parseHangzhouList(JSON.stringify({ data: { html: '模版内容不能为空！' } })).items.length, 0);
+});
+t('详情表格解析(亩换算+跳过合计)', () => {
+	const html = `<table>
+		<tr><th>地块编号</th><th>地块名称</th><th>用地性质</th><th>土地面积（亩）</th><th>容积率</th><th>成交价</th><th>竞得入选人</th></tr>
+		<tr><th>总价(万元)</th></tr>
+		<tr><td>杭政储出[2026]55号</td><td>上城区（长睦单元JG0203-03地块）</td><td>住宅（设配套公建）用地</td><td>34.3</td><td>1.8</td><td>56561</td><td>杭州滨盟房地产开发有限公司</td></tr>
+		<tr><td>杭政储出[2026]56号</td><td>拱墅区（康桥单元GS120103-10地块）</td><td>住宅（设配套公建）用地</td><td>59.9</td><td>2.0</td><td>181047</td><td>杭州滨曼房地产开发有限公司</td></tr>
+		<tr><td>合计</td><td>94.2</td><td></td><td>237608</td><td></td></tr>
+	</table>`;
+	const parcels = extractHangzhouDetail(html);
+	assert.equal(parcels.length, 2);
+	assert.equal(parcels[0].parcelId, '杭政储出[2026]55号');
+	assert.equal(parcels[0].area, '22866.667');
+	assert.equal(parcels[0].price, '56561');
+	assert.equal(parcels[1].buyer, '杭州滨曼房地产开发有限公司');
+});
+t('详情无地块表格返回空', () => {
+	assert.equal(extractHangzhouDetail('<table><tr><td>无关</td></tr></table>').length, 0);
+});
+
+console.log('chengdu:');
+t('列表解析(条目+隐藏字段)', () => {
+	const html = `<form>
+		<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="/wEPDwUKMTI0" />
+		<input type="hidden" name="TotalRecords" id="TotalRecords" value="5519" />
+		<input type="hidden" name="PageSize" id="PageSize" value="10" />
+		<input type="hidden" name="PageIndex" id="PageIndex" value="1" />
+		<div class="list-row">
+			<div class="list-item">【市本级】</div>
+			<div class="list-item list-item-title" title=" 拍卖会成交结果一览表(2026年08月04日)" onclick="javascript:window.open('/sitenew/notice/LandTrade/LandNoticeContent.aspx?id=189aea35')">拍卖会成交结果一览表(2026年08月04日)</div>
+			<div class="list-item"></div>
+			<div class="list-item">2026-08-04</div>
+		</div>
+	</form>`;
+	const { form, items } = parseChengduList(html);
+	assert.equal(form.TotalRecords, '5519');
+	assert.ok(form.__VIEWSTATE.startsWith('/wEP'));
+	assert.equal(items.length, 1);
+	assert.equal(items[0].region, '市本级');
+	assert.equal(items[0].date, '2026-08-04');
+	assert.ok(items[0].url.includes('id=189aea35'));
+});
+t('详情表格解析(单价换算总价)', () => {
+	const html = `<table>
+		<tr><th>序号</th><th>宗地编号</th><th>宗地位置</th><th>净用地面积</th><th>起始价</th><th>成交价</th><th>竞得人</th></tr>
+		<tr><td>1</td><td>CH05(070102):2026-017</td><td>成华区跳蹬河街道崔家店路411号</td><td>16366.65平方米，合24.55亩</td><td>14800元/平方米</td><td>14800元/平方米</td><td>成都成华优创城市更新建设有限责任公司</td></tr>
+	</table>`;
+	const parcels = extractChengduDetail(html);
+	assert.equal(parcels.length, 1);
+	assert.equal(parcels[0].parcelId, 'CH05(070102):2026-017');
+	assert.equal(parcels[0].area, '16366.65');
+	assert.equal(parcels[0].price, '24222.64');
+	assert.equal(parcels[0].buyer, '成都成华优创城市更新建设有限责任公司');
+});
+t('详情总价格式走 normalizePrice', () => {
+	const html = `<table>
+		<tr><th>宗地编号</th><th>宗地位置</th><th>净用地面积</th><th>成交价</th><th>竞得人</th></tr>
+		<tr><td>CZ2026-01</td><td>武侯区</td><td>2公顷</td><td>3.5亿元</td><td>某公司</td></tr>
+	</table>`;
+	const parcels = extractChengduDetail(html);
+	assert.equal(parcels[0].price, '35000');
+});
+t('详情无宗地表格返回空', () => {
+	assert.equal(extractChengduDetail('<table><tr><td>无关</td></tr></table>').length, 0);
+});
+
+console.log('suzhou:');
+t('别名', () => {
+	assert.equal(resolveCity('苏州市'), '苏州');
+	assert.equal(resolveCity('常熟市'), '常熟');
+	assert.equal(resolveCity('kunshan'), '昆山');
+	assert.equal(resolveCity('太仓市'), '太仓');
+	assert.equal(resolveCity('wujiang'), '吴江');
+});
+t('列表 URL', () => {
+	assert.ok(suzhouListUrl('003005004', 2, 20).includes('cmd=getList1&pageIndex=2&pageSize=20&categorynum=003005004'));
+});
+t('详情路径 URL 带 pageIndex', () => {
+	assert.ok(suzhouDetailPathUrl('003014004', 'abc').includes('cmd=getDetailPath&categorynum=003014004&infoid=abc'));
+	assert.ok(suzhouDetailPathUrl('003014004', 'abc').includes('pageIndex=0'));
+});
+t('列表解析(custom 二次解析)', () => {
+	const body = JSON.stringify({ custom: JSON.stringify({ TotalCount: 1413, Table: [{ infoid: 'x', city: '苏州市区', postdate: '2026-04-29', title: '苏地2026-WG-Z06号地块成交公示' }] }) });
+	const { total, items } = parseSuzhouList(body);
+	assert.equal(total, 1413);
+	assert.equal(items.length, 1);
+	assert.equal(items[0].infoid, 'x');
+});
+t('列表非法响应返回空', () => {
+	assert.equal(parseSuzhouList('<html>').items.length, 0);
+	assert.equal(parseSuzhouList(JSON.stringify({ custom: '{}' })).items.length, 0);
+});
+t('详情路径解析', () => {
+	assert.equal(parseSuzhouDetailPath(JSON.stringify({ custom: '/jyxx/003005/003005004/20260617/abc.html' })), '/jyxx/003005/003005004/20260617/abc.html');
+	assert.equal(parseSuzhouDetailPath(JSON.stringify({ custom: '验证码验证失败！' })), null);
+});
+t('成交日期归一', () => {
+	assert.equal(normalizeDealDate('2026-04-29 10:34:00.0'), '2026-04-29');
+	assert.equal(normalizeDealDate('2026.3.18'), '2026-03-18');
+	assert.equal(normalizeDealDate(''), '');
+});
+t('市区详情(键值对+信用代码剥离)', () => {
+	const html = '<table><tr><td>地块编号</td><td>苏地2026-WG-Z06号</td><td>土地位置</td><td>相城区望亭镇</td></tr><tr><td>出让面积（平方米）</td><td>47494</td><td>竞得价（万元）</td><td>33911</td></tr><tr><td>竞得单位</td><td>中亿丰物产（苏州）集团有限公司9132058559862639X9</td><td>成交时间</td><td>2026-04-29 10:34:00.0</td></tr></table>';
+	const parcels = extractSuzhouDetail(html);
+	assert.equal(parcels.length, 1);
+	assert.equal(parcels[0].parcelId, '苏地2026-WG-Z06号');
+	assert.equal(parcels[0].area, '47494');
+	assert.equal(parcels[0].price, '33911');
+	assert.equal(parcels[0].buyer, '中亿丰物产（苏州）集团有限公司');
+	assert.equal(parcels[0].dealDate, '2026-04-29');
+});
+t('常熟详情(列式表格+表头含空格)', () => {
+	const html = '<table><tr><th>地块编号</th><th>地 块 位 置</th><th>面积（㎡）</th><th>用途</th><th>成交价（万元）</th><th>成交人</th><th>成交日期</th></tr><tr><td>2026G009</td><td>支塘镇规划西外环路以东</td><td>22025</td><td>工业</td><td>1321.5</td><td>苏州通成化妆品包装有限公司</td><td>2026.3.18</td></tr></table>';
+	const parcels = extractSuzhouDetail(html);
+	assert.equal(parcels.length, 1);
+	assert.equal(parcels[0].parcelId, '2026G009');
+	assert.equal(parcels[0].location, '支塘镇规划西外环路以东');
+	assert.equal(parcels[0].dealDate, '2026-03-18');
+});
+t('嵌套表格不重复解析', () => {
+	const inner = '<table><tr><td>地块编号</td><td>A1</td><td>土地位置</td><td>X</td></tr></table>';
+	const parcels = extractSuzhouDetail(`<table><tr><td>${inner}</td></tr></table>`);
+	assert.equal(parcels.length, 1);
+});
+
+console.log('kunshan:');
+t('分页 URL', () => {
+	assert.equal(kunshanPageUrl(1), 'https://www.ks.gov.cn/kss/cjgg/common_list.shtml');
+	assert.equal(kunshanPageUrl(3), 'https://www.ks.gov.cn/kss/cjgg/common_list_3.shtml');
+});
+t('列表解析(忽略栏目导航链接)', () => {
+	const html = `<a href="/kss/cjgg/common_list.shtml" title="土地成交公告">土地成交公告</a>
+	<li><h4><a href="/kss/cjgg/202607/a959.shtml" title="开发区南浜路南侧等3宗地块的挂牌成交公告（昆地网[2026]住挂字3号）" target="_blank">开发区南浜路南侧等3宗地块的挂牌成交公告（昆地网[2026]住挂字3号）</a><span class="time">2026-07-16</span></h4></li>
+	createPageHTML('page_div',22, 1,'common_list','shtml',325)`;
+	const { pageCount, items } = parseKunshanList(html);
+	assert.equal(pageCount, 22);
+	assert.equal(items.length, 1);
+	assert.equal(items[0].date, '2026-07-16');
+	assert.ok(items[0].url.endsWith('a959.shtml'));
+});
+t('详情列式表格解析', () => {
+	const html = '<table><tr><th>序号</th><th>地块位置</th><th>土地面积(M2)</th><th>用途</th><th>起始总价（万元）</th><th>竞得价（万元）</th><th>竞得人</th></tr><tr><td>昆地网[2026]住挂字3号</td><td>开发区南浜路南侧、顺帆北路西侧</td><td>39745</td><td>住宅</td><td>50677</td><td>57297</td><td>昆山市悦茂置业有限公司</td></tr></table>';
+	const parcels = extractKunshanDetail(html);
+	assert.equal(parcels.length, 1);
+	assert.equal(parcels[0].parcelId, '昆地网[2026]住挂字3号');
+	assert.equal(parcels[0].area, '39745');
+	assert.equal(parcels[0].price, '57297');
+	assert.equal(parcels[0].buyer, '昆山市悦茂置业有限公司');
+});
+t('详情无表格返回空', () => {
+	assert.equal(extractKunshanDetail('<table><tr><td>无关</td></tr></table>').length, 0);
+});
+t('太仓详情键名(出让面积（㎡）/规划用途)', () => {
+	const html = '<table><tr><td>地块编号</td><td>2026-WG-13-2</td><td>土地位置</td><td>沙溪镇沙南公路南、翁家泾西</td></tr><tr><td>出让面积（㎡）</td><td>1483.5</td><td>规划用途</td><td>排水用地</td><td>竞得价（万元）</td><td>67</td></tr><tr><td>竞得单位</td><td>太仓市沙溪镇集体资产经营有限公司</td><td>成交时间</td><td>2026-07-22</td></tr></table>';
+	const parcels = extractSuzhouDetail(html);
+	assert.equal(parcels.length, 1);
+	assert.equal(parcels[0].parcelId, '2026-WG-13-2');
+	assert.equal(parcels[0].area, '1483.5');
+	assert.equal(parcels[0].purpose, '排水用地');
+	assert.equal(parcels[0].price, '67');
+	assert.equal(parcels[0].dealDate, '2026-07-22');
+});
+
+console.log('wujiang:');
+t('列表解析', () => {
+	const body = JSON.stringify({ total: 39, totalPages: 2, bargainParcelList: [{ parcelNo: 'WJ-J-2026-003', bargainDate: 1750867200000 }] });
+	const { total, items } = parseLandjsList(body);
+	assert.equal(total, 39);
+	assert.equal(items.length, 1);
+});
+t('列表非法响应返回空', () => {
+	assert.equal(parseLandjsList('<html>').items.length, 0);
+});
+t('地块归一化(时间戳/字段映射)', () => {
+	const row = normalizeLandjsParcel({
+		parcelNo: 'WJ-G-2026-021', landPosition: '平望镇南粤路以南', remiseArea: 26033.55,
+		landUse: '工业', price: 9664.45935, alienee: '苏州平望漂染有限公司',
+		bargainDate: 1750867200000, remiseType: '挂牌', afficheNo: '吴地网挂[2026]8号',
+	});
+	assert.equal(row.parcelId, 'WJ-G-2026-021');
+	assert.equal(row.area, '26033.55');
+	assert.equal(row.price, '9664.45935');
+	assert.equal(row.noticeType, '挂牌出让成交公示');
+	assert.equal(row.title, '吴地网挂[2026]8号');
+	assert.match(row.dealDate, /^\d{4}-\d{2}-\d{2}$/);
+	assert.ok(row.sourceUrl.startsWith('http://www.landjs.com'));
+});
+t('缺失时间戳容错', () => {
+	const row = normalizeLandjsParcel({ parcelNo: 'X', bargainDate: null });
+	assert.equal(row.dealDate, '');
+	assert.equal(row.noticeType, '成交公示');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
