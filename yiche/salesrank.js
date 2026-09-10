@@ -9,6 +9,8 @@ import {__, modify, divide, props, pick, uniqBy, prop, mergeRight} from 'ramda';
 
 import minimist from 'minimist';
 
+import { isChallenge, solveTws2 } from "./waf.js";
+
 const argv = minimist(process.argv.slice(2));
 
 const identifier = "yiche";
@@ -96,7 +98,7 @@ class Task {
 		
 		this.crawler.add(tasks);
 	}
-
+	
 	industryList = (err, res, done) => {
 		if (err) {
 			log.error(err);
@@ -104,14 +106,14 @@ class Task {
 		}
 		
 		log.info(res);
-
+		
 		if(!res.$){
 			log.error('not injected jquery.');
 		}
 		
 		
 		fs.writeFileSync('/tmp/car.html', res.body);
-			
+		
 		
 		
 		// const industries = data.list.map(prop('stock')).map(pick(this.headers));
@@ -120,14 +122,14 @@ class Task {
 		// 	path.resolve(resultDir, `${identifier}_industries_${dayjs().format("YYYY-MM-DD")}.csv`),
 		// 	papa.unparse(industries, {header:false,columns:this.headers}) + "\n"
 		// );
-		
+
 		// log.info(`${industries.length} industries found.`);
 
 		// const tasks = industries.map(ind => ({
 		// 	url:`http://www.lixinger.com/api/stock/stocks/industry/${ind.exchange}/${ind.stockCode}/${ind.tickerId}`,
 		// 	callback: this.oneIndustry
 		// }));
-		
+
 		// this.crawler.add(tasks);
 		
 		return done();
@@ -136,6 +138,17 @@ class Task {
 	oneBrand = (err, res, done) => {
 		if (err) {
 			log.error(err);
+			return done();
+		}
+
+		// WAF 挑战页：解出新的 tws2_ cookie，更新本任务所有后续请求，原样重排本请求
+		if (isChallenge(res.body)) {
+			const newCookie = solveTws2(res.body, config.cookie);
+			config.cookie = newCookie;
+			fs.writeFileSync('./config.json', JSON.stringify({ cookie: newCookie }, null, 2) + "\n");
+			log.info(`waf: tws2_ refreshed for brand ${res.options.userParams.brandId}`);
+			const retry = { ...res.options, headers: { ...res.options.headers, 'Cookie': newCookie } };
+			this.crawler.add(retry);
 			return done();
 		}
 
